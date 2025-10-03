@@ -1,0 +1,61 @@
+/* START OF MODIFIED FILE: index.css */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  font-family: "DM Sans", sans-serif !important;
+}
+
+body {
+  background-color: #f5f6f8;
+}
+
+/* Add this for notification animations */
+@layer utilities {
+  @keyframes slide-in-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-slide-in-fade-in {
+    animation: slide-in-fade-in 0.5s ease-out forwards;
+  }
+}
+
+@layer base {
+  /* For Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #a8a8a8 #f1f1f1;
+  }
+
+  /* For Webkit-based browsers (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f1f1f1;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: #c1c1c1;
+    border-radius: 10px;
+    border: 2px solid #f1f1f1;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: #a8a8a8;
+  }
+}
