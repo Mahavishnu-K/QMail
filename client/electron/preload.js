@@ -14,13 +14,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
      * @param {string} syncData.folder - The name of the folder to sync (e.g., 'INBOX').
      */
     startEmailSync: (syncData) => ipcRenderer.send('start-email-sync', syncData),
+
+    /**
+     * NEW: Triggers a one-off sync for a specific folder if it hasn't been fetched yet.
+     * @param {string} folder - The name of the folder to sync (e.g., 'SENT').
+     */
+    syncFolder: (folder) => ipcRenderer.send('sync-folder', folder),
     
     /**
-     * Asynchronously fetches the list of email headers for a folder from the local cache.
-     * @param {string} folder - The name of the folder.
-     * @returns {Promise<Array<Object>>} A promise that resolves with the list of emails.
+     * Asynchronously fetches a paginated list of email headers from the local cache.
+     * @param {object} options - The query options.
+     * @param {string} options.folder - The name of the folder.
+     * @param {number} options.page - The page number to fetch.
+     * @returns {Promise<Object>} A promise that resolves with { emails, total, hasMore }.
      */
-    getEmails: (folder) => ipcRenderer.invoke('get-emails-from-cache', folder),
+    getEmails: (options) => ipcRenderer.invoke('get-emails-from-cache', options),
 
     /**
      * Asynchronously fetches the full details of a single email from the local cache.

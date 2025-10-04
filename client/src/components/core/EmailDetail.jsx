@@ -5,6 +5,7 @@ import {
     EnvelopeOpenIcon,
     TrashIcon,
     ArchiveBoxIcon,
+    ArrowDownCircleIcon,
     ShieldCheckIcon, 
     ShieldExclamationIcon 
 } from '@heroicons/react/24/outline';
@@ -15,7 +16,7 @@ import { useDecryptedEmail } from '../../hooks/useDecryptedEmail';
 import EmailBody from './EmailBody';
 
 
-const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotification }) => {
+const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotification, setSelectedEmail }) => {
     
     const scrollContainerRef = useRef(null);
     const { content: bodyContent, isHtml, decryptionStatus } = useDecryptedEmail(email);
@@ -40,6 +41,7 @@ const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotificat
     const handleDelete = async () => {
         if (!email) return;
         onRemoveEmail(email.id); 
+        setSelectedEmail(null);
         setNotification('Moving email to Trash...');
         const result = await window.electronAPI.moveEmail({
             email: { id: email.id, imap_uid: email.imap_uid, folder: folder },
@@ -49,13 +51,14 @@ const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotificat
             setNotification('Email moved to Trash.');
         } else {
             setNotification(`Error: ${result.error}`);
-            // Here you would implement rollback logic if needed
+            
         }
     };
 
     const handleArchive = async () => {
         if (!email) return;
-        onRemoveEmail(email.id); // Optimistic UI update
+        onRemoveEmail(email.id);
+        setSelectedEmail(null);
         setNotification('Archiving email...');
         const result = await window.electronAPI.moveEmail({
             email: { id: email.id, imap_uid: email.imap_uid, folder: folder },
@@ -71,7 +74,7 @@ const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotificat
     const handleStarToggle = async () => {
         if (!email) return;
         const newStarredState = !email.is_starred;
-        onUpdateEmail(email.id, { is_starred: newStarredState }); // Optimistic UI update
+        onUpdateEmail(email.id, { is_starred: newStarredState }); 
         
         const result = await window.electronAPI.updateEmailFlags({
             email: { id: email.id, imap_uid: email.imap_uid, folder: folder },
@@ -159,8 +162,8 @@ const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotificat
                     <div className="flex items-center space-x-2 ml-4">
                         <button onClick={handleDelete} className="p-2 text-gray-500 rounded-full hover:bg-gray-100 hover:text-red-600" title="Delete"><TrashIcon className="h-5 w-5" /></button>
                         <button onClick={handleArchive} className="p-2 text-gray-500 rounded-full hover:bg-gray-100 hover:text-blue-600" title="Archive"><ArchiveBoxIcon className="h-5 w-5" /></button>
-                        <button onClick={handleStarToggle} className={`p-2 rounded-full hover:bg-gray-100 ${email.isStarred ? 'text-yellow-500' : 'text-gray-500'} hover:text-yellow-500`} title="Star">
-                            {email.isStarred ? <StarSolidIcon className="h-5 w-5" /> : <StarOutlineIcon className="h-5 w-5" />}
+                        <button onClick={handleStarToggle} className={`p-2 rounded-full hover:bg-gray-100 ${email.is_starred ? 'text-yellow-500' : 'text-gray-500'} hover:text-yellow-500`} title="Star">
+                            {email.is_starred ? <StarSolidIcon className="h-5 w-5" /> : <StarOutlineIcon className="h-5 w-5" />}
                         </button>
                     </div>
                 </div>

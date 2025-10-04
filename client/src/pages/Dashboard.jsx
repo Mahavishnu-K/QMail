@@ -1,4 +1,5 @@
-/* src/pages/DashboardPage.jsx */
+/* src/pages/DashboardPage.jsx (Final, Corrected Version) */
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useOutletContext, useNavigate } from 'react-router-dom';
 
@@ -13,97 +14,149 @@ import { LinkIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '../services/api';
 
 const DashboardPage = () => {
-    // --- Local UI State ---
+    // --- Router and Context Hooks ---
+    const { folderId = 'inbox' } = useParams();
+    const { setNotification } = useOutletContext();
+    const navigate = useNavigate();
+    const { user } = useAuth();
+    const {
+        emails,
+        error,
+        setCachedEmailsForFolder,
+        startEmailSync,
+        updateEmailInCache,
+        removeEmailFromCache
+    } = useEmail();
+
+    // --- Component State ---
     const [selectedEmail, setSelectedEmail] = useState(null); 
     const [activeAccount, setActiveAccount] = useState(null);
     const [view, setView] = useState('loading'); 
-    const { folderId = 'inbox' } = useParams();
-    const { setNotification } = useOutletContext();
     const initialSyncTriggered = useRef(false);
-    const loadedFoldersSync = useRef(new Set());
+    const [syncedFolders, setSyncedFolders] = useState(new Set());
 
-    const navigate = useNavigate();
+    // --- Pagination State ---
+    const [currentPage, setCurrentPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [isFetching, setIsFetching] = useState(false);
+    const [totalEmails, setTotalEmails] = useState(0);
 
-    // --- Global State from Contexts ---
-    const { user } = useAuth();
-    const { 
-        emails, syncStatus, error, loadingFolders, startEmailSync,
-        updateEmailInCache, removeEmailFromCache 
-    } = useEmail();
-
+    // --- Derived State ---
     const currentFolder = folderId.toUpperCase();
     const currentEmails = emails[currentFolder] || [];
-    const isFoldersLoading = loadingFolders.has(currentFolder);
 
-    // This effect runs once to load accounts and trigger the very first sync for INBOX
+    // --- Data Fetching Logic ---
+    const fetchEmailsByPage = useCallback(async (folder, page) => {
+        if (isFetching) return;
+        setIsFetching(true);
+        try {
+            const response = await window.electronAPI.getEmails({ folder, page });
+            // Always replace the list with the new page's data
+            setCachedEmailsForFolder(folder, response.emails, false);
+            setTotalEmails(response.total);
+            setHasMore(response.hasMore);
+            setCurrentPage(page);
+        } catch (err) {
+            console.error(`Failed to fetch emails for ${folder}:`, err);
+            setNotification(`Error: Could not load emails for ${folder}.`);
+        } finally {
+            setIsFetching(false);
+        }
+    }, [isFetching, setCachedEmailsForFolder, setNotification]);
+
+    // --- Effects ---
+
+    // Effect for when the user navigates to a new folder
+     useEffect(() => {
+        setSelectedEmail(null);
+        fetchEmailsByPage(currentFolder, 1);
+
+        // NEW: Trigger sync if this folder hasn't been synced in this session
+        if (activeAccount && !syncedFolders.has(currentFolder)) {
+            console.log(`Triggering first-time sync for folder: ${currentFolder}`);
+            window.electronAPI.syncFolder(currentFolder);
+            setSyncedFolders(prev => new Set(prev).add(currentFolder));
+        }
+    }, [folderId, activeAccount]);
+
+    // Effect for the one-time initial setup on component mount
     useEffect(() => {
-        if (!user || initialSyncTriggered.current) {
+        if (initialSyncTriggered.current || !user) {
             return;
         }
-        
-        initialSyncTriggered.current = true; 
-            
+
         const fetchCredentialsAndStartSync = async () => {
+            setView('loading');
             try {
                 const accountsResponse = await apiClient.get('/accounts/linked');
                 if (accountsResponse.data?.length > 0) {
                     const primaryAccount = accountsResponse.data[0];
                     setActiveAccount(primaryAccount);
-                        
                     const credsResponse = await apiClient.get(`/accounts/${primaryAccount.id}/sync-credentials`);
-                    
-                    // **THE FIX**: Ensure the credentials object is valid before syncing.
                     if (credsResponse.data && credsResponse.data.accessToken) {
                         startEmailSync(credsResponse.data, 'INBOX');
+                        setSyncedFolders(prev => new Set(prev).add('INBOX'));
                         setView('email');
-                    } else {
-                        throw new Error("Received invalid sync credentials from server.");
-                    }
+                        initialSyncTriggered.current = true; 
+                    } else { throw new Error("Received invalid sync credentials."); }
                 } else {
                     setNotification("Welcome! Please link an account in Settings.");
                     setView('welcome');
                 }
-                
             } catch (err) {
                 console.error("Failed to start initial sync:", err);
                 setNotification("Error: Could not start email sync.");
                 setView('error');
             }
         };
-
         fetchCredentialsAndStartSync();
-
     }, [user, startEmailSync, setNotification]);
 
     useEffect(() => {
-        const currentFolder = folderId.toUpperCase();
-        if (activeAccount && !loadedFoldersSync.current.has(currentFolder)) {
-            const syncNewFolder = async () => {
-                try {
-                    const credsResponse = await apiClient.get(`/accounts/${activeAccount.id}/sync-credentials`);
-                    startEmailSync(credsResponse.data, currentFolder);
-                    loadedFoldersSync.current.add(currentFolder);
-                } catch (err) {
-                    console.error(`Failed to sync folder ${currentFolder}:`, err);
-                    setNotification(`Error: Could not sync ${currentFolder}.`);
-                }
-            };
-            syncNewFolder();
-        }
-    }, [folderId, activeAccount, startEmailSync]);
+        const handleBackgroundUpdate = (syncedFolder) => {
+            // If the folder that was updated in the background is the one we are currently viewing...
+            if (syncedFolder.toUpperCase() === currentFolder) {
+                console.log(`Background update detected for ${syncedFolder}. Refreshing current view.`);
+                // Re-fetch the current page to get the updated total count and any new items.
+                fetchEmailsByPage(currentFolder, currentPage);
+            }
+        };
 
+        window.electronAPI.onNewEmailsFound(handleBackgroundUpdate);
+
+        // Cleanup the listener when the component unmounts
+        return () => {
+            window.electronAPI.cleanupSyncListeners(); 
+        };
+    }, [currentFolder, currentPage, fetchEmailsByPage]);
+
+    // --- Event Handlers ---
+    const handleNextPage = () => {
+        if (hasMore && !isFetching) {
+            fetchEmailsByPage(currentFolder, currentPage + 1);
+        }
+    };
+
+    const handlePrevPage = () => {
+        if (currentPage > 1 && !isFetching) {
+            fetchEmailsByPage(currentFolder, currentPage - 1);
+        }
+    };
 
     const handleRefreshEmails = useCallback(async () => {
-        const currentFolder = folderId.toUpperCase();
-        if (!activeAccount) return;
+        if (!activeAccount || isFetching) return;
+        setNotification(`Checking for new mail in ${currentFolder}...`);
         try {
-            setNotification(`Refreshing ${currentFolder}...`);
             const credsResponse = await apiClient.get(`/accounts/${activeAccount.id}/sync-credentials`);
             startEmailSync(credsResponse.data, currentFolder);
+            setTimeout(() => {
+                fetchEmailsByPage(currentFolder, 1); 
+                setNotification(`${currentFolder} is up to date.`);
+            }, 1500);
         } catch (err) {
             setNotification('Error: Failed to refresh emails.');
         }
-    }, [activeAccount, folderId, startEmailSync, setNotification]);
+    }, [activeAccount, isFetching, currentFolder, startEmailSync, fetchEmailsByPage, setNotification]);
 
     const handleUpdateEmail = useCallback((emailId, updates) => {
         if (selectedEmail && selectedEmail.id === emailId) {
@@ -119,15 +172,11 @@ const DashboardPage = () => {
 
     const handleSelectEmail = useCallback(async (emailHeader) => {
         if (emailHeader.id === selectedEmail?.id) return;
-        
-        setSelectedEmail({ ...emailHeader, isLoading: true });
-
+           setSelectedEmail({ ...emailHeader, isLoading: true });
         try {
             const fullEmail = await window.electronAPI.getEmailDetail(emailHeader.id);
             if (!fullEmail) throw new Error("Email content not found in cache.");
-            
             setSelectedEmail(fullEmail);
-            
             if (!fullEmail.is_read) {
                 updateEmailInCache(fullEmail.id, { is_read: 1 });
             }
@@ -138,7 +187,7 @@ const DashboardPage = () => {
         }
     }, [selectedEmail, updateEmailInCache, setNotification]);
     
-
+    // --- Render Logic ---
     if (view === 'loading') {
         return <div className="flex-1 flex items-center justify-center">Loading Dashboard...</div>;
     }
@@ -171,15 +220,19 @@ const DashboardPage = () => {
             </div>
         );
     }
-
     
     return (
         <div className="flex flex-1 overflow-hidden">
             <EmailList 
                 folder={currentFolder}
                 emails={currentEmails}
-                isLoading={isFoldersLoading} 
                 error={error}
+                totalEmails={totalEmails}
+                isLoading={isFetching}
+                currentPage={currentPage}
+                hasMore={hasMore}
+                onNextPage={handleNextPage}
+                onPrevPage={handlePrevPage}
                 selectedEmail={selectedEmail}
                 onSelectEmail={handleSelectEmail}
                 handleRefreshEmails={handleRefreshEmails}
@@ -192,6 +245,7 @@ const DashboardPage = () => {
                     onUpdateEmail={handleUpdateEmail}
                     onRemoveEmail={handleRemoveEmail}
                     setNotification={setNotification}
+                    setSelectedEmail={setSelectedEmail}
                 />
             </div>
         </div>

@@ -3,20 +3,22 @@
 const Imap = require('imap');
 const { simpleParser } = require('mailparser');
 const base64 = require('base-64');
-const { addEmailsToCache, getLatestUID } = require('./database');
+const { addEmailsToCache, getLatestUID, getOldestUID, getEmailCountForFolder } = require('./database');
 
 const GMAIL_FOLDER_MAP = {
     'INBOX': 'INBOX',
     'SENT': '[Gmail]/Sent Mail',
     'TRASH': '[Gmail]/Trash',
+    'SPAM': '[Gmail]/Spam', 
+    'DRAFTS': '[Gmail]/Drafts',
     'ARCHIVE': '[Gmail]/All Mail',
     'STARRED': '[Gmail]/All Mail', // Starred is a search, not a folder
     'IMPORTANT': '[Gmail]/All Mail' // Important is a search
 };
 
 const GMAIL_SEARCH_MAP = {
-    'STARRED': 'FLAGGED',
-    'IMPORTANT': 'X-GM-LABELS \\Important'
+    'STARRED': ['FLAGGED'],
+    'IMPORTANT': ['X-GM-LABELS','\\Important']
 };
 
 const parseEmail = (rawEmail, seqno, folderName, userEmail, message_flags = []) => {
@@ -94,19 +96,22 @@ const startSync = async (credentials, folderName, { onProgress, onNewEmails, onE
                     try {
                         const latestUID = await getLatestUID(folderName);
                         
-                        // **THE CRITICAL FIX**: Correctly initialize and build the search criteria.
-                        let searchCriteria = GMAIL_SEARCH_MAP[folderName]; // Will be an array or undefined
+                        let searchCriteria;
+                        const specialSearchTerm = GMAIL_SEARCH_MAP[folderName];
 
-                        if (searchCriteria) { // e.g., 'STARRED'
+                        if (specialSearchTerm) { 
                             onProgress(`Searching for '${folderName}' messages...`);
-                        } else { // e.g., 'INBOX', 'SENT'
-                            searchCriteria = ['ALL']; // Initialize as array
-                            if (box.uidnext > latestUID + 1) {
+                            searchCriteria = specialSearchTerm;
+                        } else { 
+                            searchCriteria = ['ALL'];
+                            if (latestUID > 0 && box.uidnext > latestUID + 1) {
                                 onProgress(`Fetching new messages for ${folderName}...`);
                                 searchCriteria.push(['UID', `${latestUID + 1}:*`]);
+                            } else if (latestUID === 0) {
+                                onProgress(`Performing initial fetch for ${folderName}...`);
                             } else {
                                 onProgress(`Sync complete for ${folderName}. No new messages.`);
-                                resolve(); // Resolve on success
+                                resolve();
                                 return imap.end();
                             }
                         }
@@ -119,7 +124,12 @@ const startSync = async (credentials, folderName, { onProgress, onNewEmails, onE
                                 return imap.end();
                             }
                             
-                            const uidsToFetch = uids.slice(-50); // Fetch most recent 50
+                            const uidsToFetch = uids.slice(-50); 
+                            if (uidsToFetch.length === 0) {
+                                onProgress(`Sync complete for ${folderName}. No results to fetch.`);
+                                resolve();
+                                return imap.end();
+                            }
                             const f = imap.fetch(uidsToFetch, { bodies: '', flags: true });
                             const emailPromises = [];
 
@@ -206,4 +216,99 @@ const moveMessage = (credentials, folder, uid, destination) => {
     });
 };
 
-module.exports = { startSync, updateFlags, moveMessage };
+const backfillOldEmails = async (credentials, folderName, { onProgress, onNewEmails, onError }) => {
+    return new Promise(async (resolve, reject) => { 
+        try {
+
+            const emailCount = await getEmailCountForFolder(folderName);
+            const BACKFILL_LIMIT = 1700;
+
+            if (emailCount >= BACKFILL_LIMIT) {
+                onProgress(`Backfill for ${folderName} skipped: Local cache limit of ${BACKFILL_LIMIT} reached (${emailCount} emails).`);
+                
+                if (onNewEmails) onNewEmails(folderName, 0); 
+                
+                return resolve();
+            }
+
+            const oldestUID = await getOldestUID(folderName);
+            
+            // If there are no emails in the cache for this folder, there's nothing to backfill from.
+            // The regular `startSync` will handle the initial population.
+            if (!oldestUID || oldestUID <= 1) {
+                onProgress(`Backfill for ${folderName}: No older emails to fetch.`);
+                if (onNewEmails) onNewEmails(folderName, 0); 
+                return resolve();
+            }
+
+            const authString = `user=${credentials.email}\x01auth=Bearer ${credentials.accessToken}\x01\x01`;
+            const xoauth2_token = base64.encode(authString);
+            const imap = new Imap({
+                user: credentials.email, xoauth2: xoauth2_token, host: credentials.imapServer, port: 993, tls: true,
+                tlsOptions: { rejectUnauthorized: false }
+            });
+
+            const handleError = (err) => {
+                const errorMsg = err.message || 'An unknown IMAP error occurred.';
+                console.error(`IMAP Error for ${folderName}:`, errorMsg);
+                onError(errorMsg);
+                reject(err);
+                try { imap.end(); } catch (e) {}
+            };
+
+            imap.once('ready', () => {
+                onProgress(`Backfilling old emails for: ${folderName}...`);
+                const physicalFolder = GMAIL_FOLDER_MAP[folderName] || folderName;
+
+                imap.openBox(physicalFolder, true, (err, box) => {
+                    if (err) return handleError(err);
+                    
+                    // Search for all emails with a UID from 1 up to (but not including) our oldest one.
+                    const searchCriteria = [['UID', `1:${oldestUID - 1}`]];
+
+                    imap.search(searchCriteria, (err, uids) => {
+                        if (err) return handleError(err);
+                        if (!uids || uids.length === 0) {
+                            onProgress(`Backfill complete for ${folderName}. All history is cached.`);
+                            if (onNewEmails) onNewEmails(folderName, 0);
+                            imap.end();
+                            return resolve();
+                        }
+
+                        const uidsToFetch = uids.slice(-50);
+                        const f = imap.fetch(uidsToFetch, { bodies: '', flags: true });
+                        const emailPromises = [];
+
+                        f.on('message', (msg, seqno) => {
+                            let raw_email = '';
+                            let message_flags = [];
+                            msg.once('attributes', (attrs) => { message_flags = attrs.flags || []; });
+                            msg.on('body', (stream) => stream.on('data', (c) => raw_email += c.toString('utf8')));
+                            msg.once('end', () => emailPromises.push(parseEmail(raw_email, seqno, folderName, credentials.email, message_flags)));
+                        });
+                        f.once('error', handleError);
+                        f.once('end', async () => {
+                            const emailsToCache = (await Promise.all(emailPromises)).filter(Boolean);
+                            if (emailsToCache.length > 0) {
+                                const newRowCount = await addEmailsToCache(emailsToCache);
+                                onProgress(`Backfilled and cached ${newRowCount} older emails for ${folderName}.`);
+                                if (onNewEmails) onNewEmails(folderName, newRowCount);
+                            } else {
+                                if (onNewEmails) onNewEmails(folderName, 0);
+                            }
+                            imap.end();
+                            resolve();
+                        });
+                    });
+                });
+            });
+            imap.once('error', handleError);
+            imap.connect();
+        } catch (error) {
+            onError(error.message);
+            reject(error);
+        }
+    });
+};
+
+module.exports = { startSync, updateFlags, moveMessage, backfillOldEmails };

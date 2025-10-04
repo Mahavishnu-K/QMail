@@ -1,12 +1,13 @@
 /* START OF MODIFIED FILE: src/components/core/EmailList.jsx */
 
-import React, { useRef, useEffect } from 'react';
+import React, { useCallback } from 'react';
 import { PhotoIcon } from '@heroicons/react/24/solid';
 import { useAuth } from '../../contexts/AuthContext';
-import { InboxIcon, ExclamationCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { InboxIcon, ExclamationCircleIcon, ArrowPathIcon, ChevronLeftIcon, ChevronRightIcon, MagnifyingGlassIcon, AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline';
+import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid'; 
+import { StarIcon as StarOutlineIcon } from '@heroicons/react/24/outline';
 
 const SkeletonEmailItem = () => (
-    // ... (skeleton component remains the same) ...
     <div className="p-3 animate-pulse"><div className="flex items-start space-x-3"><div className="w-8 h-8 rounded-full bg-gray-200"></div><div className="flex-1 min-w-0"><div className="h-3.5 bg-gray-200 rounded w-3/4 mb-1.5"></div><div className="h-3.5 bg-gray-200 rounded w-1/2 mb-1.5"></div><div className="h-3 bg-gray-200 rounded w-full"></div></div></div></div>
 );
 
@@ -18,25 +19,13 @@ const EmailList = ({
     totalEmails,
     isLoading,
     error,
+    currentPage,
     hasMore,
-    isFetchingMore,
+    onNextPage,
+    onPrevPage,
     handleRefreshEmails,
-    onLoadMore
 }) => {
-    const scrollContainerRef = useRef(null);
     const { user } = useAuth();
-    const firstName = user?.name?.split(' ')[0] || 'there';
-
-    useEffect(() => {
-        const container = scrollContainerRef.current;
-        if (!container) return;
-        const handleScroll = () => {
-            const isNearBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 100;
-            if (isNearBottom && hasMore && !isFetchingMore) onLoadMore();
-        };
-        container.addEventListener('scroll', handleScroll);
-        return () => container.removeEventListener('scroll', handleScroll);
-    }, [hasMore, isFetchingMore, onLoadMore]);
 
     const renderContent = () => {
         if (isLoading) {
@@ -52,17 +41,15 @@ const EmailList = ({
         return (
             <ul className="flex-1 divide-y divide-gray-100">
                 {emails.map((email) => {
-                    // --- THE FIX ---
-                    // 1. Get the raw sender name part (e.g., "Spotify").
+                    
                     const rawSender = (email.sender || 'Unknown Sender').split('<')[0].trim();
-                    // 2. Use a regular expression to remove quotes from the start and end of the string.
                     const cleanedSender = rawSender.replace(/^"|"$/g, '');
-
+                
                     return (
                         <li
                             key={email.id}
                             onClick={() => onSelectEmail(email)}
-                            className={`p-3 cursor-pointer transition-colors duration-150 border-l-2 ${
+                            className={`p-3 cursor-pointer transition-colors duration-150 border-l-2 group ${
                                 selectedEmail?.id === email.id
                                     ? 'bg-blue-50 border-blue-500'
                                     : email.is_read
@@ -85,8 +72,18 @@ const EmailList = ({
                                            {email.sent_at ? new Date(email.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                                         </span>
                                     </div>
-                                    <div className={`text-sm truncate mt-0.5 ${!email.is_read ? 'font-semibold text-gray-900' : 'font-normal text-gray-800'}`}>
-                                        {email.subject || '(No Subject)'}
+                                    <div className="flex justify-between items-start"> {/* Flex container for subject and star */}
+                                        <div className={`text-sm truncate mt-0.5 ${!email.is_read ? 'font-semibold text-gray-900' : 'font-normal text-gray-800'}`}>
+                                            {email.subject || '(No Subject)'}
+                                        </div>
+                                        {/* --- ADDED STAR ICON --- */}
+                                        <div className="ml-2 mt-0.5">
+                                            {email.is_starred ? (
+                                                <StarSolidIcon className="h-4 w-4 text-yellow-400" />
+                                            ) : (
+                                                <StarOutlineIcon className="h-4 w-4 text-gray-300 group-hover:text-gray-400" />
+                                            )}
+                                        </div>
                                     </div>
                                     <p className="text-xs text-gray-500 truncate mt-0.5">
                                         {email.snippet || ''}
@@ -100,16 +97,25 @@ const EmailList = ({
         );
     };
 
+    const itemsPerPage = 50;
+    const startItem = totalEmails > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0;
+    const endItem = Math.min(startItem + itemsPerPage - 1, totalEmails);
+
     return (
         <div className="w-[360px] border-r border-gray-200 flex flex-col bg-white shrink-0">
             <div className="p-4 border-b sticky top-0 bg-white z-10 h-16 flex flex-col justify-center">
-                <div className="flex justify-between items-center">
-                    <h1 className="text-lg font-bold text-gray-800">
-                        Hello, {firstName}
-                    </h1>
+                <div className="flex justify-end items-center">
                     <div className="flex gap-3 items-center relative">
-                        {!isLoading && !error && (
-                            <p className="text-sm text-gray-500">{totalEmails} Emails</p>
+                        {!isLoading && totalEmails > 0 && (
+                            <div className="flex items-center space-x-4 text-[0.8rem] text-gray-600">
+                                <span>{startItem}-{endItem} of {totalEmails} Emails</span>
+                                <button onClick={onPrevPage} disabled={currentPage <= 1 || isLoading} className="disabled:text-gray-300 disabled:cursor-not-allowed">
+                                    <ChevronLeftIcon className="w-5 h-5"/>
+                                </button>
+                                <button onClick={onNextPage} disabled={!hasMore || isLoading} className="disabled:text-gray-300 disabled:cursor-not-allowed">
+                                    <ChevronRightIcon className="w-5 h-5"/>
+                                </button>
+                            </div>
                         )}
 
                         <div className="relative group">
@@ -123,18 +129,25 @@ const EmailList = ({
                     </div>
                 </div>
             </div>
-            
-            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-                {renderContent()}
-                
-                {isFetchingMore && (
-                    <div className="flex justify-center items-center p-4">
-                        <ArrowPathIcon className="h-5 w-5 animate-spin text-gray-400" />
+
+            <div className="bg-white flex px-2 items-center justify-between border-b border-gray-200 h-14">
+                <div className="relative flex-1 pr-1">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
                     </div>
-                )}
-                {!hasMore && emails.length > 0 && (
-                    <p className="text-center text-xs text-gray-400 py-4">End of conversation</p>
-                )}
+                    <input 
+                        type="text"
+                        placeholder="Search mail..."
+                        className="w-full bg-gray-100 border-transparent rounded-lg py-2 pl-10 pr-4 focus:outline-none text-sm"
+                    />
+                </div>
+                <button className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors focus:outline-none">
+                    <AdjustmentsHorizontalIcon className="h-5 w-5" />
+                </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto">
+                {renderContent()}
             </div>
         </div>
     );
