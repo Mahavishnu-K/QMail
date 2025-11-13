@@ -161,4 +161,4 @@ Distributed under the MIT License. See LICENSE for more information.
 
 ## Author
 
-Mahavishnu K - [Visit Portfolio] (https://mahavishnu-k.vercel.app/ "Portfolio")
+**Mahavishnu K** - [Visit Portfolio](https://mahavishnu-k.vercel.app/ "Portfolio")
