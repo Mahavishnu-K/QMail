@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../services/api';
-import { PlusCircleIcon } from '@heroicons/react/24/outline';
+import { PlusCircleIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 const SettingsPage = ({ onClose }) => {
     const [linkedAccounts, setLinkedAccounts] = useState([]);
@@ -33,6 +33,18 @@ const SettingsPage = ({ onClose }) => {
         }
     };
 
+    const handleRemoveLinkedAccount = async (accountId) => {
+        const originalAccounts = [...linkedAccounts];
+        setLinkedAccounts(prevAccounts => prevAccounts.filter(acc => acc.id != accountId));
+        setError('');
+        try{
+            await apiClient.delete(`/accounts/${accountId}`);
+        } catch (err) {
+            setError('Failed to remove linked account');
+            setLinkedAccounts(originalAccounts);
+        }
+    };
+
     return (
         <div className="flex-1 p-8 bg-gray-50">
             <div className="max-w-4xl mx-auto">
@@ -50,7 +62,12 @@ const SettingsPage = ({ onClose }) => {
                         {linkedAccounts.map(account => (
                             <li key={account.id} className="p-3 bg-gray-100 rounded-md flex items-center justify-between">
                                 <span className="font-medium text-gray-700">{account.email_address}</span>
-                                <span className="text-sm text-gray-500 capitalize">{account.provider}</span>
+                                <div className="flex gap-2">
+                                    <span className="text-base text-gray-500 capitalize">{account.provider}</span>
+                                    <button onClick={() => handleRemoveLinkedAccount(account.id)} title="Remove this account">
+                                        <TrashIcon className="w-5 h-auto text-gray-500"/>
+                                    </button>
+                                </div>
                             </li>
                         ))}
                     </ul>

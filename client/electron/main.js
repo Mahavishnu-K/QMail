@@ -1,6 +1,7 @@
+console.log("<<<<< LOADING main.js - VERSION 2.0 >>>>>");
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const { setupDatabase, getEmailsFromCache, getEmailDetails, updateEmail } = require('./database');
+const { initializeDatabase, getEmailsFromCache, getEmailDetails, updateEmailInDb, findEmailBySessionId, addToSecureSentCache, getAllParkedEmails, removeParkedEmail, updateParkedEmailStatusInDb, getFromSecureSentCache } = require('./database');
 const { startSync, updateFlags, moveMessage, backfillOldEmails } = require('./imapService');
 
 let backfillInterval = null; 
@@ -15,6 +16,15 @@ let autoSyncFolderIndex = 0;
 const foldersToBackfill = ['INBOX', 'SENT', 'ARCHIVE', 'TRASH'];
 let autoBackfillFolderIndex = 0;
 
+if (!app.isPackaged) {
+  const portArg = process.argv.find(arg => arg.startsWith('--dev-port='));
+  const port = portArg ? portArg.split('=')[1] : '5173';
+  const defaultUserDataPath = app.getPath('userData');
+  const newUserDataPath = `${defaultUserDataPath}-dev-${port}`;
+  app.setPath('userData', newUserDataPath);
+  console.log(`Setting userData path to: ${newUserDataPath}`);
+}
+
 function createWindow() {
     const win = new BrowserWindow({
         width: 1200,
@@ -24,13 +34,40 @@ function createWindow() {
         },
     });
 
+    const portArg = process.argv.find(arg => arg.startsWith('--dev-port='));
+
+    // 2. Extract the port number, or default to 5173 if the argument isn't found.
+    const port = portArg ? portArg.split('=')[1] : '5173';
+    const devUrl = `http://localhost:${port}`;
+
+
     // In production, you'd load the built file. For dev, you load the Vite server.
     if (app.isPackaged) {
         win.loadFile(path.join(__dirname, '../dist/index.html'));
     } else {
-        win.loadURL('http://localhost:5173');
+        win.loadURL(devUrl);
         win.webContents.openDevTools();
     }
+
+    ipcMain.handle('get-all-parked-emails', async () => {
+        return getAllParkedEmails();
+    });
+
+    ipcMain.handle('remove-parked-email', async (event, sessionId) => {
+        return removeParkedEmail(sessionId);
+    });
+    
+    ipcMain.handle('update-parked-email-status', (event, { sessionId, status }) => {
+        return updateParkedEmailStatusInDb(sessionId, status);
+    });
+
+    ipcMain.handle('add-to-secure-sent-cache', async (event, emailData) => {
+        return addToSecureSentCache(emailData);
+    });
+
+    ipcMain.handle('get-from-secure-sent-cache', (event, sessionId) => {
+        return getFromSecureSentCache(sessionId);
+    });
 
     // --- IPC LISTENERS ---
     // Triggered by the UI to start a background sync
@@ -165,7 +202,7 @@ function createWindow() {
                  await updateFlags(currentCredentials, email.folder, email.imap_uid, '\\Seen', 'add');
             }
 
-            await updateEmail(email.id, updates);
+            await updateEmailInDb(email.id, updates);
 
             if (updates.is_starred !== undefined) {
                 win.webContents.send('sync-new-emails-found', 'STARRED');
@@ -183,7 +220,7 @@ function createWindow() {
          try {
             await moveMessage(currentCredentials, email.folder, email.imap_uid, destinationFolder);
             
-            await updateEmail(email.id, { folder: destinationFolder });
+            await updateEmailInDb(email.id, { folder: destinationFolder });
             
             console.log(`Successfully moved email ${email.id} to ${destinationFolder} in local DB.`);
             return { success: true };
@@ -197,10 +234,30 @@ function createWindow() {
     ipcMain.handle('get-email-detail', async (event, emailId) => {
         return getEmailDetails(emailId);
     });
+
+    ipcMain.handle('find-email-by-session-id', async (event, sessionId) => {
+        return findEmailBySessionId(sessionId);
+    });
+
+    ipcMain.handle('update-email-in-db', async (event, { id, updates }) => {
+        
+        console.log("\n\n\n!!!!!!!!!!!!!!!!! MAIN PROCESS IPC HANDLER FIRING !!!!!!!!!!!!!!!!\n\n\n");
+        console.log(`>>>> MAIN PROCESS RECEIVED UPDATE FOR ID ${id}:`, updates);
+
+        const result = await updateEmailInDb(id, updates);
+        if (result.changes > 0) {
+            // --- THIS IS THE NEW PART ---
+            console.log(`Main Process: Notifying renderer that email ${id} was updated.`);
+            // 'win' is the reference to your BrowserWindow
+            win.webContents.send('email-decrypted-and-updated', { emailId: id });
+        }
+        return result;
+    });
+
 }
 
 app.whenReady().then(() => {
-    setupDatabase(); 
+    initializeDatabase(); 
     createWindow();
 });
 

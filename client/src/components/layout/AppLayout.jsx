@@ -7,6 +7,7 @@ import Notification from '../ui/Notification';
 import { useAuth } from '../../contexts/AuthContext';
 import { EmailProvider } from '../../contexts/EmailContext';
 import { WebSocketProvider } from '../../contexts/webSocketContext';
+import { PendingSessionProvider } from '../../contexts/PendingContext'; 
 
 const AppLayout = () => {
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -22,20 +23,22 @@ const AppLayout = () => {
         // Providers are now scoped to the authenticated layout
         <EmailProvider>
             <WebSocketProvider>
-                <div className="flex h-screen bg-white font-sans">
-                    <Sidebar
-                        user={user}
-                        onSelectFolder={handleSelectFolder}
-                        onCompose={handleCompose}
-                        onSettings={handleSettings}
-                        collapsed={sidebarCollapsed}
-                        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-                    />
-                    <div className="flex-1 flex flex-col overflow-hidden">
-                        <Outlet context={{ setNotification }} />
+                <PendingSessionProvider>
+                    <div className="flex h-screen bg-white font-sans">
+                        <Sidebar
+                            user={user}
+                            onSelectFolder={handleSelectFolder}
+                            onCompose={handleCompose}
+                            onSettings={handleSettings}
+                            collapsed={sidebarCollapsed}
+                            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+                        />
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                            <Outlet context={{ setNotification }} />
+                        </div>
+                        <Notification message={notification} onClose={() => setNotification('')} />
                     </div>
-                    <Notification message={notification} onClose={() => setNotification('')} />
-                </div>
+                </PendingSessionProvider>
             </WebSocketProvider>
         </EmailProvider>
     );

@@ -3,16 +3,20 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const { app } = require('electron');
 
-const dbPath = path.join(app.getPath('userData'), 'emails.db');
-const db = new sqlite3.Database(dbPath);
+let db;
 
-const setupDatabase = () => {
+const initializeDatabase = () => {
+    const dbPath = path.join(app.getPath('userData'), 'emails.db');
+    console.log(`Database module connecting to: ${dbPath}`); 
+    db = new sqlite3.Database(dbPath);
+
     db.serialize(() => {
         console.log("Setting up Database...");
         db.run(`
             CREATE TABLE IF NOT EXISTS emails (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id TEXT UNIQUE,
+                session_id TEXT,
                 imap_uid INTEGER,
                 folder TEXT NOT NULL,
                 sender TEXT,
@@ -30,6 +34,19 @@ const setupDatabase = () => {
             )
         `);
         db.run(`CREATE INDEX IF NOT EXISTS idx_folder_uid ON emails (folder, imap_uid);`);
+
+        db.run(`
+            CREATE TABLE IF NOT EXISTS secure_sent_cache (
+                session_id TEXT PRIMARY KEY,
+                recipient TEXT NOT NULL,
+                recipient_id TEXT NOT NULL,
+                subject TEXT,
+                body TEXT,
+                protocol TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
     });
 };
 
@@ -42,23 +59,79 @@ const getLatestUID = (folder) => {
     });
 };
 
+const getAllParkedEmails = () => {
+    return new Promise((resolve, reject) => {
+        db.all("SELECT * FROM secure_sent_cache", [], (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows || []);
+        });
+    });
+};
+
+const removeParkedEmail = (sessionId) => {
+    return new Promise((resolve, reject) => {
+        db.run("DELETE FROM secure_sent_cache WHERE session_id = ?", [sessionId], function(err) {
+            if (err) return reject(err);
+            resolve({ changes: this.changes });
+        });
+    });
+};
+
+const updateParkedEmailStatusInDb = (sessionId, status) => {
+    return new Promise((resolve, reject) => {
+        db.run("UPDATE secure_sent_cache SET status = ? WHERE session_id = ?", [status, sessionId], function(err) {
+            if (err) return reject(err);
+            resolve({ changes: this.changes });
+        });
+    });
+};
+
+const addToSecureSentCache = (emailData) => {
+    return new Promise((resolve, reject) => {
+        const stmt = db.prepare(`
+            INSERT INTO secure_sent_cache (session_id, recipient, recipient_id, subject, body, protocol, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        stmt.run(
+            emailData.session_id, emailData.recipient, emailData.recipientId,
+            emailData.subject, emailData.body, emailData.protocol, emailData.status,
+            function(err) {
+                if (err) return reject(err);
+                resolve({ id: this.lastID });
+            }
+        );
+        stmt.finalize();
+    });
+};
+
+const getFromSecureSentCache = (sessionId) => {
+    return new Promise((resolve, reject) => {
+        db.get("SELECT * FROM secure_sent_cache WHERE session_id = ?", [sessionId], (err, row) => {
+            if (err) return reject(err);
+            resolve(row);
+        });
+    });
+};
+
 const addEmailsToCache = (emails) => {
     return new Promise((resolve, reject) => {
         if (!emails || emails.length === 0) return resolve(0);
         const stmt = db.prepare(`
             INSERT OR IGNORE INTO emails (
-                message_id, imap_uid, folder, sender, recipient, subject, snippet, 
-                body_plain, body_html, attachments, sent_at, is_read, is_starred
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                message_id, session_id, imap_uid, folder, sender, recipient, subject, snippet, 
+                body_plain, body_html, attachments, sent_at, is_read, is_starred, is_qumail_encrypted, encryption_protocol
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         let newRows = 0;
         db.serialize(() => {
             emails.forEach(email => {
                 stmt.run(
-                    email.message_id, email.imap_uid, email.folder, email.sender, email.recipient,
+                    email.message_id, email.session_id, email.imap_uid, email.folder, email.sender, email.recipient,
                     email.subject, email.snippet, email.body_plain, email.body_html,
                     JSON.stringify(email.attachments || []), email.sent_at,
                     email.is_read ? 1 : 0, email.is_starred ? 1 : 0,
+                    email.is_qumail_encrypted ? 1 : 0,
+                    email.encryption_protocol,
                     function(err) {
                         if (err) console.error("DB Insert Error:", err);
                         if (this.changes > 0) newRows++;
@@ -85,7 +158,7 @@ const getEmailDetails = (id) => {
     });
 };
 
-const updateEmail = (id, updates) => {
+const updateEmailInDb = (id, updates) => {
     return new Promise((resolve, reject) => {
         const fields = Object.keys(updates);
         const values = Object.values(updates);
@@ -172,14 +245,29 @@ const getEmailCountForFolder = (folder) => {
     });
 };
 
+const findEmailBySessionId = (sessionId) => {
+    return new Promise((resolve, reject) => {
+        db.get("SELECT * FROM emails WHERE session_id = ?", [sessionId], (err, row) => {
+            if (err) return reject(err);
+            resolve(row);
+        });
+    });
+};
+
 
 module.exports = {
-    setupDatabase,
+    initializeDatabase,
     getLatestUID,
     getOldestUID,
-    updateEmail,
+    updateEmailInDb,
     addEmailsToCache,
     getEmailsFromCache,
     getEmailDetails,
-    getEmailCountForFolder
+    findEmailBySessionId,
+    getEmailCountForFolder,
+    getAllParkedEmails,
+    removeParkedEmail,
+    updateParkedEmailStatusInDb,
+    addToSecureSentCache,
+    getFromSecureSentCache
 };

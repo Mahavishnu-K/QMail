@@ -4,11 +4,14 @@ import CryptoJS from 'crypto-js';
  * Encrypts plaintext using AES-256-CBC.
  * @param {string} plaintext - The message to encrypt.
  * @param {string} keyHex - The 256-bit key as a hex string.
- * @returns {string} - A string containing iv:ciphertext, both hex-encoded.
+ * @returns {string} - A string containing iv_base64:ciphertext_base64.
  */
 export const encryptAES = (plaintext, keyHex) => {
     const key = CryptoJS.enc.Hex.parse(keyHex);
-    const iv = CryptoJS.lib.WordArray.random(128 / 8); // 16 bytes IV
+    const iv = CryptoJS.lib.WordArray.random(128 / 8);
+
+    console.log(">>>> [Inside encryptAES] Raw plaintext:", plaintext);
+    console.log(">>>> [Inside encryptAES] Plaintext length:", plaintext.length);
 
     const encrypted = CryptoJS.AES.encrypt(plaintext, key, {
         iv: iv,
@@ -16,24 +19,37 @@ export const encryptAES = (plaintext, keyHex) => {
         padding: CryptoJS.pad.Pkcs7
     });
 
-    // Combine IV and ciphertext for easy storage and decryption
-    return iv.toString(CryptoJS.enc.Hex) + ':' + encrypted.ciphertext.toString(CryptoJS.enc.Hex);
+    console.log(">>>> [Inside encryptAES] encrypted:", encrypted);
+
+    // --- THE FIX: Use Base64 instead of Hex ---
+    const ivBase64 = CryptoJS.enc.Base64.stringify(iv);
+    const ciphertextBase64 = CryptoJS.enc.Base64.stringify(encrypted.ciphertext);
+    
+    console.log(">>>> [Inside encryptAES] ivBase64 + ':' + ciphertextBase64:", ivBase64 + ':' + ciphertextBase64);
+    
+
+    return ivBase64 + ':' + ciphertextBase64;
 };
 
 /**
  * Decrypts an AES-256-CBC ciphertext package.
- * @param {string} ciphertextPackage - The "iv:ciphertext" string.
+ * @param {string} ciphertextPackage - The "iv_base64:ciphertext_base64" string.
  * @param {string} keyHex - The 256-bit key as a hex string.
  * @returns {string} - The original plaintext.
  */
 export const decryptAES = (ciphertextPackage, keyHex) => {
     try {
-        const [ivHex, ciphertextHex] = ciphertextPackage.split(':');
-        if (!ivHex || !ciphertextHex) throw new Error('Invalid ciphertext package format.');
+        const [ivBase64, ciphertextBase64] = ciphertextPackage.split(':');
+        if (!ivBase64 || !ciphertextBase64) throw new Error('Invalid ciphertext package format.');
+
+        console.log(">>>> [Inside decryptAES] ivBase64:", ivBase64);
+        console.log(">>>> [Inside decryptAES] ciphertextBase64:", ciphertextBase64);
 
         const key = CryptoJS.enc.Hex.parse(keyHex);
-        const iv = CryptoJS.enc.Hex.parse(ivHex);
-        const ciphertext = CryptoJS.enc.Hex.parse(ciphertextHex);
+        
+        // --- THE FIX: Parse from Base64 instead of Hex ---
+        const iv = CryptoJS.enc.Base64.parse(ivBase64);
+        const ciphertext = CryptoJS.enc.Base64.parse(ciphertextBase64);
 
         const decrypted = CryptoJS.AES.decrypt({ ciphertext: ciphertext }, key, {
             iv: iv,
@@ -41,7 +57,21 @@ export const decryptAES = (ciphertextPackage, keyHex) => {
             padding: CryptoJS.pad.Pkcs7
         });
         
-        return decrypted.toString(CryptoJS.enc.Utf8);
+        const plaintext = decrypted.toString(CryptoJS.enc.Utf8);
+        console.log(">>>> [Inside decryptAES] Raw plaintext:", plaintext);
+        console.log(">>>> [Inside decryptAES] Plaintext length:", plaintext.length);
+
+        // Add a check to see if the output is valid. If not, the key was wrong.
+        if (plaintext.length === 0 && decrypted.sigBytes > 0) {
+            throw new Error("Malformed UTF-8 data after decryption.");
+        }
+        
+        if (!plaintext) {
+            throw new Error("Decryption resulted in empty plaintext.");
+        }
+
+        return plaintext;
+
     } catch (e) {
         console.error("Decryption failed:", e);
         return "Error: Could not decrypt this message. The key may be incorrect.";

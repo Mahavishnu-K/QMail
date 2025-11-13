@@ -1,15 +1,17 @@
 {
-  "name": "client",
+  "name": "qmail",
   "private": true,
   "version": "1.0.0",
   "description": "A Quantum-Secure Email Client",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
+    "dev:alt": "vite --port 5174",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "dev:electron": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:electron2": "concurrently \"npm run dev:alt\" \"wait-on http://localhost:5174 && electron . --dev-port=5174\"",
     "build:electron": "npm run build && electron-builder"
   },
   "dependencies": {

@@ -31,9 +31,11 @@ const Sidebar = ({ onSelectFolder, onCompose, onSettings, collapsed, onToggleCol
         <aside className={`bg-white flex flex-col border-r border-gray-200 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
             {/* --- USER PROFILE SECTION --- */}
             <div className={`p-4 flex items-center h-16 border-b border-gray-200 shrink-0 ${collapsed ? 'justify-center' : 'justify-between'}`}>
-                <h2 className="text-lg font-bold text-gray-800">
-                    Hello, {firstName}
-                </h2>
+                {!collapsed && 
+                    <h2 className="text-lg font-bold text-gray-800">
+                        Hello, {firstName}
+                    </h2>
+                }
                 {/* Collapse/Expand Button */}
                  <button onClick={onToggleCollapse} className="p-1.5 rounded-full hover:bg-gray-100">
                     <ChevronLeftIcon className={`h-5 w-5 text-gray-500 transition-transform duration-300 ${collapsed ? 'rotate-180' : ''}`} />
@@ -69,15 +71,15 @@ const Sidebar = ({ onSelectFolder, onCompose, onSettings, collapsed, onToggleCol
                     <ArrowLeftOnRectangleIcon className="h-5 w-5" />
                     {!collapsed && <span className="ml-3 text-sm font-medium">Logout</span>}
                 </button>
-                {!collapsed && (
+                   
+                {/* Name and Email Section */}
+                {!collapsed ? (
                     <div className="flex items-center min-w-0 p-1">
-                        {/* Avatar with Initial */}
                         <div className="w-9 h-9 bg-gray-200 rounded-full mr-3 flex-shrink-0 flex items-center justify-center">
                             <span className="text-sm font-bold text-gray-600">
                                 {getUserInitial()}
                             </span>
                         </div>
-                        {/* Name and Email Section */}
                         <div className="min-w-0">
                             {isLoading ? (
                                 // Skeleton loading state
@@ -96,6 +98,14 @@ const Sidebar = ({ onSelectFolder, onCompose, onSettings, collapsed, onToggleCol
                                     </p>
                                 </>
                             )}
+                        </div>
+                    </div>
+                ) : (
+                    <div className="p-2 pl-3 mt-auto space-y-1 shrink-0">
+                        <div className="w-9 h-9 bg-gray-200 rounded-full flex items-center justify-center">
+                            <span className="text-sm font-bold text-gray-600">
+                                {getUserInitial()}
+                            </span>
                         </div>
                     </div>
                 )}

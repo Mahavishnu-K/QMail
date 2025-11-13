@@ -35,20 +35,34 @@ const parseEmail = (rawEmail, seqno, folderName, userEmail, message_flags = []) 
                 contentId: att.cid
             }));
 
+            const textBody = parsed.text || '';
+            let sessionId = null;
+            let isQmailEncrypted = false;
+
+            if (textBody.startsWith('---BEGIN QMail MESSAGE---')) {
+                isQmailEncrypted = true;
+                const match = textBody.match(/SessionID: ([\w-]+)/);
+                if (match) {
+                    sessionId = match[1];
+                }
+            }
+
             resolve({
                 message_id: parsed.messageId,
+                session_id: sessionId,
                 imap_uid: seqno,
                 folder: folderName,
                 sender: isSentFolder ? userEmail : (parsed.from?.text || 'Unknown'),
                 recipient: isSentFolder ? (parsed.to?.text || 'Unknown') : userEmail,
                 subject: parsed.subject || '(No Subject)',
-                snippet: (parsed.text || '').substring(0, 150).replace(/\s+/g, ' '),
+                snippet: isQmailEncrypted ? "[QuMail Encrypted Message]" : (parsed.text || '').substring(0, 150).replace(/\s+/g, ' '),
                 body_plain: parsed.text,
                 body_html: parsed.html || parsed.textAsHtml,
                 attachments: attachments,
                 sent_at: parsed.date?.toISOString() || new Date().toISOString(),
                 is_read: message_flags.includes('\\Seen') || false,
                 is_starred: message_flags.includes('\\Flagged') || false,
+                is_qumail_encrypted: isQmailEncrypted,
             });
         });
     });

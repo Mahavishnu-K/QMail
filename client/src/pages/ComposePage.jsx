@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useWebSocket } from '../contexts/webSocketContext';
 import { checkQuMailUser, sendFinalEmail } from '../services/api';
-import { initiateQKDHandshakeAsAlice, generatePQCSharedSecret } from '../services/qkdService';
+import { generatePQCSharedSecret } from '../services/qkdService';
 import { encryptAES, processOTP } from '../services/encryptionService';
 import SecurityDropdown from '../components/specific/securityDropdown';
 import HandshakeAnimation from '../components/specific/HandshakeAnimation';
+import { usePendingSession } from '../contexts/PendingContext';
 
 // Debounce helper
 function debounce(func, delay) {
@@ -16,7 +18,7 @@ function debounce(func, delay) {
     };
 }
 
-const ComposePage = ({ activeAccount, onClose }) => {
+const ComposePage = () => {
     const [recipient, setRecipient] = useState('');
     const [recipientInfo, setRecipientInfo] = useState({ isQuMailUser: false, id: null });
     const [subject, setSubject] = useState('');
@@ -26,9 +28,14 @@ const ComposePage = ({ activeAccount, onClose }) => {
     const [isSending, setIsSending] = useState(false);
     const [handshakeStatus, setHandshakeStatus] = useState('');
     const [error, setError] = useState('');
+    const [isSendComplete, setIsSendComplete] = useState(false);
+    const [view, setView] = useState('FORM');
 
     const { socket } = useWebSocket();
     const auth = useAuth(); 
+    const { parkEmailForSending, updateParkedEmailStatus } = usePendingSession();
+
+    const navigate = useNavigate();
 
     const checkRecipient = async (email) => {
         if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
@@ -69,72 +76,136 @@ const ComposePage = ({ activeAccount, onClose }) => {
         }
 
         setIsSending(true);
+        setView('SUMMARY');
         setError('');
         setHandshakeStatus('Preparing to send...');
         
-        try {
-            let finalCiphertext = body;
-            let protocolUsed = 'None';
-            let key;
-            const session_id = crypto.randomUUID();
+        const session_id = crypto.randomUUID();
 
-            if (securityLevel !== 'LEVEL_5_NONE') {
-                console.log("Generated new session ID for secure send:", session_id);
+        // --- FLOW 1: Standard Unencrypted Email ---
+        if (securityLevel === 'LEVEL_5_NONE') {
+            try {
+                setHandshakeStatus('Transmitting email...');
+                await sendFinalEmail({ recipient, subject, body, is_encrypted: false, protocol: 'None' });
+                setHandshakeStatus('Email Sent Successfully!');
+                setIsSendComplete(true);
 
-                const handshakeOptions = {
-                    onProgress: setHandshakeStatus,
-                    websocket: socket,
-                    recipientId: recipientInfo.id, 
-                    senderId: auth.user.id,
-                    session_id: session_id        
-                };
-
-                switch (securityLevel) {
-                    case 'LEVEL_1_OTP':
-                        key = await initiateQKDHandshakeAsAlice({ ...handshakeOptions, protocol: 'MF-QKD', keyLengthBits: body.length * 8 });
-                        const otpCiphertext = processOTP(body, key);
-                        finalCiphertext = `---BEGIN QMail MESSAGE---\nProtocol: MF-QKD + OTP\nSessionID: ${session_id}\n---\n${otpCiphertext}`;
-                        protocolUsed = 'MF-QKD + OTP';
-                        break;
-                    case 'LEVEL_2_MF_AES':
-                        key = await initiateQKDHandshakeAsAlice({ ...handshakeOptions, protocol: 'MF-QKD', keyLengthBits: 256 });
-                        const encryptedBody = encryptAES(body, key);
-                        finalCiphertext = `---BEGIN QMail MESSAGE---\nProtocol: MF-QKD + AES-256\nSessionID: ${session_id}\n---\n${encryptedBody}`;
-                        protocolUsed = 'MF-QKD + AES-256';
-                        break;
-                    case 'LEVEL_3_PQC':
-                        key = await generatePQCSharedSecret({ onProgress: setHandshakeStatus });
-                        const pqcCiphertext = encryptAES(body, key);
-                        finalCiphertext = `---BEGIN QMail MESSAGE---\nProtocol: PQC + AES-256\nSessionID: ${session_id}\n---\n${pqcCiphertext}`;
-                        protocolUsed = 'PQC (Simulated) + AES-256';
-                        break;
-                    case 'LEVEL_4_BB84_AES':
-                        key = await initiateQKDHandshakeAsAlice({ ...handshakeOptions, protocol: 'BB84', keyLengthBits: 256 });
-                        const aesCiphertextBB84 = encryptAES(body, key);
-                        finalCiphertext = `---BEGIN QMail MESSAGE---\nProtocol: BB84 + AES-256\nSessionID: ${session_id}\n---\n${aesCiphertextBB84}`;
-                        protocolUsed = 'BB84 + AES-256';
-                        break;
-                    case 'LEVEL_5_NONE':
-                        break;
-                    default:
-                        throw new Error("Invalid security level.");
+                if (socket && recipientInfo.id) {
+                    console.log('Sending instant sync notification to recipient.');
+                    socket.emit('new_mail_notification', {
+                        to: recipientInfo.id,
+                        folder: 'INBOX' 
+                    });
                 }
-            }
-            
-            setHandshakeStatus('Transmitting email...');
-            await sendFinalEmail({
-                recipient, subject, body: finalCiphertext,
-                is_encrypted: securityLevel !== 'LEVEL_5_NONE', protocol: protocolUsed,
-            });
-            setHandshakeStatus('Email Sent Successfully!');
-            setTimeout(() => onClose(true), 1500);
 
-        } catch (err) {
-            setError(err.message || "An unexpected error occurred.");
-            setHandshakeStatus(`Failed: ${err.message}`);
-            setIsSending(false);
+            } catch (err) {
+                setError(err.message);
+                setHandshakeStatus('Failed to send.');
+                setIsSending(false);
+            }
+            return;
+        }
+
+        // --- FLOW 2: Asynchronous PQC Email ---
+        if (securityLevel === 'LEVEL_3_PQC') {
+            try {
+                const key = await generatePQCSharedSecret({ onProgress: setHandshakeStatus });
+                const ciphertext = encryptAES(body, key);
+                const finalCiphertext = `---BEGIN QMail MESSAGE---\nProtocol: PQC + AES-256\nSessionID: ${session_id}\n---\n${ciphertext}`;
+                const protocolUsed = 'PQC (Simulated) + AES-256';
+                
+                setHandshakeStatus('Transmitting email...');
+                await sendFinalEmail({ recipient, subject, body: finalCiphertext, is_encrypted: true, protocol: protocolUsed });
+                setHandshakeStatus('Email Sent Successfully!');
+                setIsSendComplete(true);
+
+                if (socket && recipientInfo.id) {
+                    console.log('Sending instant sync notification to recipient.');
+                    socket.emit('new_mail_notification', {
+                        to: recipientInfo.id,
+                        folder: 'INBOX'
+                    });
+                }
+            } catch (err) {
+                setError(err.message);
+                setHandshakeStatus(`Failed: ${err.message}`);
+                setIsSending(false);
+            }
+            return;
+        }
+
+        // --- FLOW 3: Live QKD (Store-and-Forward capable) ---
+        if (['LEVEL_1_OTP', 'LEVEL_2_MF_AES', 'LEVEL_4_BB84_AES'].includes(securityLevel)) {
+            // Step 1: Park the email data in the context.
+            const protocolUsed = {
+                'LEVEL_1_OTP': 'MF-QKD + OTP',
+                'LEVEL_2_MF_AES': 'MF-QKD + AES-256',
+                'LEVEL_4_BB84_AES': 'BB84 + AES-256'
+            }[securityLevel];
+
+            const handleSuccessfulSend = () => {
+                setHandshakeStatus("Secure Email Sent Successfully!");
+                setIsSendComplete(true);
+            };
+
+            const parkedEmailData = {
+                session_id: session_id,
+                recipient: recipient,
+                recipientId: recipientInfo.id,
+                subject: subject,
+                body: body,
+                protocol: protocolUsed,
+                status: 'initiating' 
+            };
+            await window.electronAPI.addToSecureSentCache(parkedEmailData);
+            parkEmailForSending(parkedEmailData, handleSuccessfulSend);
+
+            setView('SUMMARY');
+            setHandshakeStatus('Attempting live handshake...');
         }
     };
+
+    if (view === 'SUMMARY') {
+        const isQkdPending = ['LEVEL_1_OTP', 'LEVEL_2_MF_AES', 'LEVEL_4_BB84_AES'].includes(securityLevel);
+
+        return (
+            <div className="flex-1 p-8 bg-white text-center flex flex-col items-center justify-center">
+                <div className="max-w-md w-full">
+                    <h2 className="text-2xl font-bold mb-6 text-gray-800">Send Status</h2>
+                    <div className="mb-4">
+                        <HandshakeAnimation status={handshakeStatus} error={error} />
+                    </div>
+                    
+                    {!error && ( // Only show a message if there is no error
+                        <p className="text-sm text-gray-500 mt-4 px-4">
+                            {isQkdPending && !isSendComplete && (
+                                <>
+                                    If the recipient is offline, this message is now pending.
+                                    <br/>
+                                    You can monitor its status in your Notifications Panel.
+                                </>
+                            )}
+                            {isSendComplete && (
+                                <>
+                                    Sent successfully.
+                                </>
+                            )}
+                        </p>
+                    )}
+                    
+                    <div className="mt-8">
+                        <button 
+                            onClick={() => navigate('/folder/inbox')} 
+                            className="bg-blue-600 text-white font-bold py-2 px-8 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                            Okay
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
 
     return (
         <div className="flex-1 p-8 bg-white">
@@ -160,7 +231,7 @@ const ComposePage = ({ activeAccount, onClose }) => {
                 </div>
                 {isSending && <div className="mb-4"><HandshakeAnimation status={handshakeStatus} error={error} /></div>}
                 <div className="flex justify-end space-x-4">
-                    <button type="button" onClick={() => onClose(false)} disabled={isSending} className="bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded-lg">Cancel</button>
+                    <button type="button" onClick={() => navigate(-1)} disabled={isSending} className="bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded-lg">Cancel</button>
                     <button type="submit" disabled={isSending} className="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg disabled:bg-blue-300">
                         {isSending ? 'Sending...' : 'Send'}
                     </button>

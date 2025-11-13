@@ -10,8 +10,9 @@ import Header from '../components/core/Header';
 import EmailList from '../components/core/EmailList';
 import EmailDetail from '../components/core/EmailDetail';
 import { LinkIcon } from '@heroicons/react/24/outline'; 
-
+import { useWebSocket } from '../contexts/webSocketContext';
 import { apiClient } from '../services/api';
+import keyManager from '../services/keyManagerService';
 
 const DashboardPage = () => {
     // --- Router and Context Hooks ---
@@ -19,6 +20,8 @@ const DashboardPage = () => {
     const { setNotification } = useOutletContext();
     const navigate = useNavigate();
     const { user } = useAuth();
+    const { socket } = useWebSocket();
+
     const {
         emails,
         error,
@@ -65,6 +68,24 @@ const DashboardPage = () => {
     }, [isFetching, setCachedEmailsForFolder, setNotification]);
 
     // --- Effects ---
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleForceSync = ({ folder }) => {
+            console.log(`Received force_sync notification for folder: ${folder}. Triggering refresh.`);
+            window.electronAPI.syncFolder(folder);
+        };
+
+        console.log("Dashboard: Attaching force_sync listener to socket.");
+        socket.on('force_sync', handleForceSync);
+
+        // Cleanup the listener when the component unmounts or the socket changes
+        return () => {
+            console.log("Dashboard: Cleaning up force_sync listener.");
+            socket.off('force_sync', handleForceSync);
+        };
+    }, [socket]); 
 
     // Effect for when the user navigates to a new folder
      useEffect(() => {
@@ -114,21 +135,43 @@ const DashboardPage = () => {
 
     useEffect(() => {
         const handleBackgroundUpdate = (syncedFolder) => {
-            // If the folder that was updated in the background is the one we are currently viewing...
             if (syncedFolder.toUpperCase() === currentFolder) {
                 console.log(`Background update detected for ${syncedFolder}. Refreshing current view.`);
-                // Re-fetch the current page to get the updated total count and any new items.
-                fetchEmailsByPage(currentFolder, currentPage);
+                fetchEmailsByPage(currentFolder, 1);
+                setTimeout(() => {
+                    console.log("Dashboard: Triggering decryption check after sync.");
+                    keyManager.attemptPendingDecryptions();
+                }, 500);
             }
         };
 
-        window.electronAPI.onNewEmailsFound(handleBackgroundUpdate);
+        const handleEmailDecrypted = (updatedEmailId) => {
+            console.log(`Dashboard: Received notification that email ${updatedEmailId} was decrypted. Refreshing list and detail view.`);
 
-        // Cleanup the listener when the component unmounts
+            fetchEmailsByPage(currentFolder, currentPage);
+
+            if (selectedEmail && selectedEmail.id === updatedEmailId) {
+                (async () => {
+                    const freshEmailDetails = await window.electronAPI.getEmailDetail(updatedEmailId);
+
+                    console.log(">>>> FRESH EMAIL DETAILS FETCHED BY UI:", freshEmailDetails);
+
+                    if (freshEmailDetails) {
+                        setSelectedEmail(freshEmailDetails);
+                    }
+                })();
+            }
+        };
+
+        // Attach listeners
+        window.electronAPI.onNewEmailsFound(handleBackgroundUpdate);
+        window.electronAPI.onEmailDecrypted(handleEmailDecrypted);
+
+        // Cleanup
         return () => {
             window.electronAPI.cleanupSyncListeners(); 
         };
-    }, [currentFolder, currentPage, fetchEmailsByPage]);
+    }, [currentFolder, currentPage, selectedEmail, fetchEmailsByPage]);
 
     // --- Event Handlers ---
     const handleNextPage = () => {
@@ -196,7 +239,7 @@ const DashboardPage = () => {
         return (
             <div className="flex-1 flex items-center justify-center text-center bg-gray-50">
                 <div>
-                    <h2 className="text-2xl font-bold text-gray-800">Welcome to QuMail!</h2>
+                    <h2 className="text-2xl font-bold text-gray-800">Welcome to QMail!</h2>
                     <p className="mt-2 text-gray-600">Please link a mailbox in Settings to get started.</p>
                     <button 
                         onClick={() => navigate('/settings')}

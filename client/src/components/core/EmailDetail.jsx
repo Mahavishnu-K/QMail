@@ -19,7 +19,7 @@ import EmailBody from './EmailBody';
 const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotification, setSelectedEmail }) => {
     
     const scrollContainerRef = useRef(null);
-    const { content: bodyContent, isHtml, decryptionStatus } = useDecryptedEmail(email);
+    const { content: bodyContent, isHtml, decryptionStatus } = useDecryptedEmail(email, folder);
     const attachments = email?.attachments || [];
 
     // Effect for auto-scrolling to top and marking email as read
@@ -36,7 +36,6 @@ const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotificat
             });
         }
     }, [email, folder]);
-
 
     const handleDelete = async () => {
         if (!email) return;
@@ -190,16 +189,27 @@ const EmailDetail = ({ email, folder, onUpdateEmail, onRemoveEmail, setNotificat
                     {decryptionStatus === 'error' && <ShieldExclamationIcon className="h-4 w-4 mr-2" />}
                     
                     {
-                        decryptionStatus === 'success' ? `Decrypted with ${email.encryption_protocol || 'QuMail Security'}` :
+                        decryptionStatus === 'success' ? `Decrypted with ${email.encryption_protocol || 'QMail Security'}` :
                         decryptionStatus === 'error'   ? 'Decryption Failed' :
-                        'QuMail Encrypted Message'
+                        'QMail Encrypted Message'
                     }
                 </div>
             )}
 
             {/* Body: Where the content is rendered */}
             <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto p-6 bg-gray-50">
-                <div className="max-w-4xl mx-auto bg-white shadow-sm rounded-lg overflow-hidden">
+                <div className="max-w-4xl mx-auto bg-white shadow-sm rounded-lg overflow-hidden relative">
+
+                    {email.is_qumail_encrypted && decryptionStatus === 'success' && (
+                        <div 
+                            className="absolute top-4 right-4 z-10 bg-blue-50 text-blue-800 text-xs font-semibold px-2 py-1 rounded-full flex items-center gap-1.5 shadow-sm border border-blue-200"
+                            title={`This message was secured using the ${email.encryption_protocol || 'QMail'} protocol.`}
+                        >
+                            <ShieldCheckIcon className="h-3.5 w-3.5" />
+                            <span>{email.encryption_protocol || 'QMail Secure'}</span>
+                        </div>
+                    )}
+
                     {/* Render based on decryption status */}
                     {decryptionStatus === 'processing' && (
                         <div className="p-8 text-center text-gray-500">

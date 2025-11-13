@@ -56,27 +56,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
      */
     moveEmail: (data) => ipcRenderer.invoke('move-email', data),
 
-    // --- Main to Renderer Communication (Event Listeners) ---
-    /**
-     * Listens for real-time progress updates from the sync process.
-     * @param {Function} callback - The function to call with the progress message.
-     */
+    
+    findEmailBySessionId: (sessionId) => ipcRenderer.invoke('find-email-by-session-id', sessionId),
+    updateEmailInDb: (data) => ipcRenderer.invoke('update-email-in-db', data),
+    
     onSyncProgress: (callback) => ipcRenderer.on('sync-progress', (_event, message) => callback(message)),
-    
-    /**
-     * Listens for a signal that new emails have been added to the cache for a specific folder.
-     * @param {Function} callback - The function to call with the name of the synced folder.
-     */
     onNewEmailsFound: (callback) => ipcRenderer.on('sync-new-emails-found', (_event, syncedFolder) => callback(syncedFolder)),
-    
-    /**
-     * Listens for any errors that occur during the sync process.
-     * @param {Function} callback - The function to call with the error message.
-     */
     onSyncError: (callback) => ipcRenderer.on('sync-error', (_event, errorMessage) => callback(errorMessage)),
 
+    onEmailDecrypted: (callback) => ipcRenderer.on('email-decrypted-and-updated', (_event, { emailId }) => callback(emailId)),
 
-    // --- Cleanup ---
+    getAllParkedEmails: () => ipcRenderer.invoke('get-all-parked-emails'),
+    removeParkedEmail: (sessionId) => ipcRenderer.invoke('remove-parked-email', sessionId),
+    updateParkedEmailStatus: (data) => ipcRenderer.invoke('update-parked-email-status', data),
+
+    addToSecureSentCache: (data) => ipcRenderer.invoke('add-to-secure-sent-cache', data),
+    getFromSecureSentCache: (sessionId) => ipcRenderer.invoke('get-from-secure-sent-cache', sessionId),
 
     /**
      * Removes all sync-related listeners to prevent memory leaks in React.
@@ -86,5 +81,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.removeAllListeners('sync-progress');
         ipcRenderer.removeAllListeners('sync-new-emails-found');
         ipcRenderer.removeAllListeners('sync-error');
+        ipcRenderer.removeAllListeners('email-decrypted-and-updated');
     }
 });
