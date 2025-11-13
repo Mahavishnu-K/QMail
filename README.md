@@ -28,8 +28,6 @@ QMail is a next-generation, high-security desktop email client designed to prote
 
 The core of QMail is a software-based, practical implementation of quantum-secure protocols. It provides a user-friendly environment to experience the future of secure communication, today.
 
-![QMail Screenshot](https://i.imgur.com/7w8c3jB.png) <!-- Replace with a link to your best screenshot -->
-
 ## Key Innovations
 
 QMail introduces two fundamental innovations that make it unique:
