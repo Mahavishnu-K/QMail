@@ -1,14 +1,18 @@
 import httpx
 import smtplib
 import imaplib
+import base64
 import asyncio
 from fastapi.concurrency import run_in_threadpool
 from fastapi import HTTPException
 from email.message import EmailMessage
+from email.utils import formataddr
 from app.core.config import settings
 from app.core.constants import EmailProvider
 from app.core.security import decrypt_token, encrypt_token
 from app.db.supabase_client import supabase
+from app.services import user_service
+from app.schemas.email import EmailSend
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 
@@ -35,16 +39,20 @@ async def _refresh_and_update_tokens(linked_account: dict):
         res.raise_for_status()
         new_tokens = res.json()
 
-    new_access_token = new_tokens['access_token']
-    new_expiry = datetime.now(timezone.utc) + timedelta(seconds=new_tokens['expires_in'])
+    update_payload = {
+        'encrypted_access_token': encrypt_token(new_tokens['access_token']),
+        'token_expiry': (datetime.now(timezone.utc) + timedelta(seconds=new_tokens['expires_in'])).isoformat()
+    }
 
-    supabase.table('linked_accounts').update({
-        'encrypted_access_token': encrypt_token(new_access_token),
-        'token_expiry': new_expiry.isoformat()
-    }).eq('id', linked_account['id']).execute()
+    if 'refresh_token' in new_tokens:
+        print(f"INFO: Received a new refresh token for {linked_account['email_address']}. Updating in DB.")
+        # 3. If so, add it to our update payload.
+        update_payload['encrypted_refresh_token'] = encrypt_token(new_tokens['refresh_token'])
+
+    supabase.table('linked_accounts').update(update_payload).eq('id', linked_account['id']).execute()
     
     print(f"INFO: Token refresh successful for {linked_account['email_address']}")
-    return new_access_token
+    return new_tokens['access_token']
 
 def _get_valid_access_token_sync(linked_account: dict) -> str:
     """
@@ -80,31 +88,49 @@ def _generate_oauth2_string(email: str, access_token: str) -> str:
     """Generates the XOAUTH2 authentication string for IMAP and SMTP."""
     return f"user={email}\1auth=Bearer {access_token}\1\1"
 
-async def send_email(linked_account: dict, recipient: str, subject: str, body: str):
-
+async def send_email(linked_account: dict, email_data: EmailSend):
     user_email = linked_account['email_address']
+    qmail_user_profile = await user_service.get_user_by_id(user_id=str(linked_account['user_id']))
+    if not qmail_user_profile:
+        raise HTTPException(status_code=404, detail="Could not find the QMail user profile for this linked account.")
+    
+    display_name = qmail_user_profile['name']
     provider = linked_account['provider']
+    
+    smtp_host = SMTP_SERVERS.get(provider)
+    if not smtp_host:
+        raise HTTPException(status_code=500, detail=f"Unsupported provider: {provider}")
+    
     access_token = await _get_valid_access_token_async(linked_account)
     auth_string = _generate_oauth2_string(user_email, access_token)
+    xoauth_string = base64.b64encode(auth_string.encode('utf-8')).decode('ascii')
     
     msg = EmailMessage()
-    msg.set_content(body)
-    msg['Subject'] = subject
-    msg['From'] = user_email
-    msg['To'] = recipient
+    msg['Subject'] = email_data.subject
+    msg["From"] = formataddr((display_name, user_email))
+    msg['To'] = email_data.recipient
+    msg.set_content(email_data.body, subtype='plain', charset='utf-8')
 
     def _blocking_smtp_send():
         try:
-            with smtplib.SMTP_SSL(SMTP_SERVERS[provider], 465) as server:
-                server.auth('XOAUTH2', lambda x: auth_string)
+            with smtplib.SMTP_SSL(smtp_host, 465) as server:
+                server.ehlo()
+                code, response = server.docmd("AUTH", "XOAUTH2 " + xoauth_string)
+
+                if code != 235:  # 235 = Auth successful
+                    detail = response.decode(errors="ignore")
+                    print(f"SMTP AUTH ERROR: {code} - {detail}")
+                    raise HTTPException(status_code=401, detail=f"Authentication failed: {detail}")
+
                 server.send_message(msg)
-            print(f"Production: Successfully sent email from {user_email}")
+            print(f"Successfully sent email from {user_email}")
         except smtplib.SMTPAuthenticationError as e:
-            raise HTTPException(status_code=401, detail=f"SMTP Authentication failed: {e.smtp_error.decode()}")
+            error_detail = e.smtp_error.decode() if hasattr(e.smtp_error, 'decode') else str(e.smtp_error)
+            print(error_detail)
+            raise HTTPException(status_code=401, detail=f"SMTP Authentication failed: {error_detail}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
             
-    # Run the blocking smtplib code in a separate thread
     await run_in_threadpool(_blocking_smtp_send)
     
 def _execute_imap_command(linked_account: dict, folder: str, command, *args):

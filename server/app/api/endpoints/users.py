@@ -23,4 +23,7 @@ def create_new_user(user: UserCreate):
 @router.get("/check", response_model=dict)
 async def check_user_exists(email: str, current_user: User = Depends(deps.get_current_user)):
     user = await user_service.get_user_by_email(email=email)
-    return {"is_qumail_user": user is not None}
+    if user:
+        return {"is_qumail_user": True, "user_id": str(user['id'])}
+    else:
+        return {"is_qumail_user": False, "user_id": None}

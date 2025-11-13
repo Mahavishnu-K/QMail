@@ -5,6 +5,8 @@ from app.schemas.user import User
 from app.db.supabase_client import supabase
 from app.services import email_service
 from app.schemas.account import LinkedAccount 
+from uuid import UUID
+import httpx
 
 router = APIRouter()
 
@@ -45,6 +47,35 @@ async def get_sync_credentials(account_id: str, current_user: User = Depends(dep
             "imapServer": email_service.IMAP_SERVERS.get(linked_account['provider'])
         }
 
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 400:
+            print(f"ERROR: Google rejected the refresh token for account {account_id}. Re-authentication is required.")
+            raise HTTPException(
+                status_code=401,
+                detail="The stored authentication token from Google is no longer valid. Please go to Settings to re-link your account."
+            )
+        raise HTTPException(status_code=500, detail="An error occurred while communicating with the email provider.")
+    
     except Exception as e:
         print(f"Error getting sync credentials: {e}")
         raise HTTPException(status_code=500, detail="Could not retrieve sync credentials.")
+    
+@router.delete("/{account_id}", status_code=200, response_model=dict)
+async def remove_linked_account(account_id: UUID, current_user: User = Depends(deps.get_current_user)):
+    try:
+        response = supabase.table('linked_accounts') \
+            .delete() \
+            .eq('id', str(account_id)) \
+            .eq('user_id', str(current_user.id)) \
+            .execute()
+         
+        if not response.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Linked account not found or you do not have permission to remove it."
+            )
+        print(f"User {current_user.email} successfully removed linked account {account_id}")
+        return {"message": "Linked account removed successfully."}
+    except Exception as e:
+        print(f"Error removing linked account {account_id}: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected server error occurred.")

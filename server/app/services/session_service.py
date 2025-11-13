@@ -1,12 +1,13 @@
 from app.db.supabase_client import supabase
 from uuid import UUID
 
-async def create_pending_session(initiator_id: UUID, recipient_id: UUID, initiator_email: str, recipient_email: str):
+async def create_pending_session(session_id: UUID, initiator_id: UUID, recipient_id: UUID, initiator_email: str, recipient_email: str):
     """
     Creates a record of a pending handshake request in the database.
     """
-    try:
+    try: 
         response = supabase.table('pending_sessions').insert({
+            "session_id": str(session_id),
             "initiator_id": str(initiator_id),
             "recipient_id": str(recipient_id),
             "initiator_email": initiator_email,

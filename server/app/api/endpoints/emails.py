@@ -30,9 +30,7 @@ async def send_email_endpoint(
     try:
         await email_service.send_email(
             linked_account=linked_account,
-            recipient=email_in.recipient,
-            subject=email_in.subject,
-            body=email_in.body
+            email_data=email_in 
         )
         return {"message": "Email has been accepted for delivery."}
     except HTTPException as e:

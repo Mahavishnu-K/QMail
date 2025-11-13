@@ -22,7 +22,7 @@ app_asgi = ASGIApp(sio, other_asgi_app=app, socketio_path='socket.io')
 # --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], # Vite default port
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"], # Vite default port
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,12 +48,11 @@ async def connect(sid, environ, auth):
             return False 
 
         
-        user: User = token_data["user"] # We now know this is a User model
-        
+        user: User = token_data["user"]
         user_id = str(user.id)
         user_email = user.email
 
-        await manager.connect(sid, user_id)
+        await manager.connect(sid, user_id, user_email)
         await sio.save_session(sid, {'user_id': user_id, 'user_email': user_email})
         print(f"WebSocket connected: user_id={user_id}, sid={sid}")
         return True
@@ -74,11 +73,15 @@ async def disconnect(sid):
 
 @sio.on('*')
 async def catch_all(event, sid, data):
-    if event.startswith('qkd_'):
+
+    allowed_prefixes = ['qkd_', 'check_', 'new_', 'store_']
+
+    if any(event.startswith(prefix) for prefix in allowed_prefixes):
         session = await sio.get_session(sid)
         if session:
             sender_id = session['user_id']
-            await manager.handle_message(event, data, sender_id)
+            sender_email = session['user_email']
+            await manager.handle_message(event, data, sender_id, sender_email)
 
 @app.get("/")
 def read_root():
