@@ -32,7 +32,7 @@ The core of QMail is a software-based, practical implementation of quantum-secur
 
 QMail introduces two fundamental innovations that make it unique:
 
-### 1. The Proprietary MF-QKD Protocol (Software Simulation)
+### 1. The Proprietary MF-QKD Protocol (Software Based)
 QMail features the first software implementation of our novel **Multi-Factor Quantum Key Distribution (MF-QKD)** protocol.
 
 *   **What it is:** MF-QKD is our proprietary enhancement of the foundational BB84 protocol. It is designed to encode information across multiple, independent quantum properties (e.g., polarization and phase) of a single photon.
