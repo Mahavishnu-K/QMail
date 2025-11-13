@@ -1,7 +1,5 @@
 # QMail: The Quantum-Secure Email Client
 
-![QMail-Banner](https://www.google.com/url?sa=i&url=https%3A%2F%2Fwww.miamisic.org%2Fa-secure-quantum-cloud-it-is-now-possible-to-protect-the-privacy-of-groups-of-users-performing-calculations-simultaneously-on-distant-servers%2F&psig=AOvVaw10fUwyudLw6WbMeqGg-R3c&ust=1763126905981000&source=images&cd=vfe&opi=89978449&ved=0CBUQjRxqFwoTCNCQmNyd75ADFQAAAAAdAAAAABAV) <!-- Optional: Create a cool banner image for your project -->
-
 <p align="center">
   <strong>The First Desktop Email Client Architected for the Post-Quantum Era.</strong><br/>
   <em>A high-fidelity software implementation of quantum-secure communication protocols.</em>
