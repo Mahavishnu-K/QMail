@@ -6,7 +6,6 @@
 </p>
 
 <p align="center">
-  <img alt="GitHub License" src="https://img.shields.io/badge/license-MIT-blue.svg">
   <img alt="Client" src="https://img.shields.io/badge/client-Electron%20%7C%20React-blueviolet">
   <img alt="Server" src="https://img.shields.io/badge/server-FastAPI%20%7C%20Python-success">
   <img alt="Security" src="https://img.shields.io/badge/security-MF--QKD%20%7C%20PQC-red">
@@ -154,10 +153,6 @@ This project provides a robust foundation for the future of secure communication
 
 **Mobile Client:** Developing a mobile version of QMail to bring quantum-ready security to all platforms.
 
-
-## License
-
-Distributed under the MIT License. See LICENSE for more information.
 
 ## Author
 
