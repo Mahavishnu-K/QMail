@@ -31,9 +31,7 @@ export const PendingSessionProvider = ({ children }) => {
                 setParkedEmails(emailsFromDb);
             } catch (err) {
                 console.error("Failed to load parked emails from DB:", err);
-            } finally {
-                setIsLoading(false);
-            }
+            } 
         };
         loadParkedEmails();
     }, []);
